@@ -30,7 +30,6 @@
     <button id="start-btn" onclick="startCamera()">📷 화면 비추기 시작</button>
     <button id="capture-btn" onclick="captureAndAnalyze()">🔍 이 화면 분석하기</button>
     
-    <!-- 실시간 음성인식(STT) 결과 창 -->
     <div id="stt-box">🎙️ 말씀해 주세요... (듣는 중)</div>
     <div id="result-box">아래 버튼을 눌러 카메라를 켜고 키오스크를 촬영해 주세요.</div>
 </div>
@@ -48,31 +47,26 @@
     const startBtn = document.getElementById('start-btn');
     const captureBtn = document.getElementById('capture-btn');
 
-    // 1. 브라우저 내장 음성 인식(STT) 엔진 초기화
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
         recognition = new SpeechRecognition();
-        recognition.continuous = false; // 한 문장씩 인식
-        recognition.lang = 'ko-KR';     // 한국어 설정
-        recognition.interimResults = false; // 중간 결과 생략
+        recognition.continuous = false;
+        recognition.lang = 'ko-KR';
+        recognition.interimResults = false;
 
-        // 음성 인식 시작 시
         recognition.onstart = () => {
             sttBox.style.display = "block";
             sttBox.innerHTML = "🎙️ 말씀해 주세요... (음성 제어 듣는 중)";
         };
 
-        // 음성 인식 성공 시 사용자 목소리를 데이터화하여 텍스트로 출력
         recognition.onresult = (event) => {
             const userSpeech = event.results[0][0].transcript;
             sttBox.innerHTML = `📢 인식된 명령: "${userSpeech}"`;
             resultBox.innerHTML += `\n\n[보이스 제어 수신 데이터]: "${userSpeech}" 명령을 분석하여 로봇 제어 모듈로 전송합니다.`;
-            // 💡 추후 이곳에 특정 단어(예: "아메리카노", "결제")가 포함되면 로봇팔을 움직이는 코드를 연결하면 됩니다!
         };
 
-        // 음성 인식 종료 시
         recognition.onend = () => {
-            setTimeout(() => { sttBox.style.display = "none"; }, 5000); // 5초 후 인식창 닫기
+            setTimeout(() => { sttBox.style.display = "none"; }, 5000);
         };
 
         recognition.onerror = () => {
@@ -82,7 +76,7 @@
 
     async function startCamera() {
         try {
-            stopAllSpeechAndRec(); // 카메라 리셋 시 전부 중지
+            stopAllSpeechAndRec();
             resultBox.innerHTML = "카메라를 연결하는 중입니다...";
             streamRef = await navigator.mediaDevices.getUserMedia({ 
                 video: { facingMode: { ideal: "environment" } }, 
@@ -116,15 +110,18 @@
         captureBtn.style.display = "none";
         startBtn.style.display = "block";
         
-        stopAllSpeechAndRec(); // 다시 촬영 버튼 누르는 순간 기존 TTS와 STT 강제 종료
+        stopAllSpeechAndRec();
         startBtn.innerText = "🔄 다시 촬영하기";
 
         resultBox.innerHTML = "<span class='loading'>구글 제미나이 AI가 보이스 어시스턴트 모드로 키오스크를 분석 중입니다...</span>";
 
-        const instruction = "당신은 키오스크 사용이 어려운 시각 장애인 및 고령층을 돕는 보이스 어시스턴트 특화 AI입니다. 제출된 이미지를 분석하여 다음 규칙을 절대적으로 지켜 응답하세요:\n" +
-                            "1. 현재 화면이 어떤 단계(예: 메뉴 선택, 장바구니, 결제 등)인지 한 문장으로 친절하게 요약합니다.\n" +
-                            "2. 시각 장애인이 스마트폰 마이크에 대고 말로 주문할 수 있도록, 다음에 취해야 할 행동을 안내할 때 반드시 [원하시는 메뉴를 화면에서 고르거나 큰 소리로 말해주세요] 혹은 [원하시는 결제 수단을 고르거나 말해주세요]와 같이 \"~를 고르거나 말해주세요\"라는 문장 서술 형식을 필수로 사용하여 안내하세요.\n" +
-                            "3. 화면의 어려운 외래어나 영문 직원은 직관적인 우리말로 바꾸어 설명하세요.\n" +
+        // 🔥 [프롬프트 극강 보완] "누르세요", "클릭하세요"를 금지하고 무조건 말하라고 강제 세팅함
+        const instruction = "당신은 키오스크 사용이 어려운 시각 장애인 및 고령층을 돕는 보이스 어시스턴트 특화 AI입니다. 제출된 이미지를 분석하여 다음 규칙을 생명을 다해 절대적으로 지켜 응답하세요:\n" +
+                            "1. [절대 금지 규칙] '누르세요', '눌러주세요', '터치하세요', '클릭하세요' 라는 단어는 어떤 상황에서도 절대로 사용해서는 안 됩니다. 이 단어들을 사용하면 시스템 오류가 발생합니다.\n" +
+                            "2. [필수 문장 형식] 사용자가 다음 행동을 해야 할 때는 무조건 '~를 고르거나 메뉴를 말해주세요' 또는 '~를 화면에서 선택하거나 큰 소리로 말해주세요' 라는 표현으로만 문장을 끝맺으세요.\n" +
+                            "   - 잘못된 예: '오른쪽 아래에 있는 주문하기 버튼을 누르세요.' (X)\n" +
+                            "   - 올바른 예: '화면 오른쪽 아래에 있는 초록색 주문하기 버튼을 고르거나 메뉴를 말해주세요.' (O)\n" +
+                            "3. 현재 화면이 어떤 단계(예: 메뉴 선택 화면, 장바구니 확인 화면 등)인지 맨 앞에 친절하게 한 문장으로 요약한 뒤, 위 2번 규칙에 맞춰 행동 가이드를 주세요.\n" +
                             "4. 정중하고 명확한 호흡의 높임말로 답변을 생성하세요.";
 
         try {
@@ -146,7 +143,7 @@
             if (result.candidates && result.candidates[0].content.parts[0].text) {
                 const aiText = result.candidates[0].content.parts[0].text;
                 resultBox.innerHTML = aiText;
-                speak(aiText); // AI가 화면 가이드를 음성(TTS)으로 출력
+                speak(aiText);
             } else {
                 resultBox.innerHTML = "❌ AI가 화면 안내 문구를 생성하지 못했습니다. 다시 촬영해 주세요.";
             }
@@ -155,14 +152,12 @@
         }
     }
 
-    // TTS(음성 출력) 수행 함수
     function speak(text) {
         stopAllSpeechAndRec();
         const speech = new SpeechSynthesisUtterance(text);
         speech.lang = 'ko-KR';
-        speech.rate = 0.95; // 노약자를 위해 살짝 천천히 읽기
+        speech.rate = 0.95;
 
-        // 💡 [핵심 연동] AI가 안내 방송(TTS)을 완료하면 자동으로 사용자의 음성인식(STT) 마이크를 켭니다.
         speech.onend = () => {
             if (recognition) {
                 recognition.start();
@@ -172,7 +167,6 @@
         window.speechSynthesis.speak(speech);
     }
 
-    // 오디오 장치 충돌 방지를 위해 이전의 음성 재생 및 인식을 한 번에 끄는 함수
     function stopAllSpeechAndRec() {
         window.speechSynthesis.cancel();
         if (recognition) {
