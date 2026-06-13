@@ -94,7 +94,7 @@
 </div>
 
 <script>
-    // 복사해주신 OpenRouter API Key
+    // OpenRouter API Key
     const OPENROUTER_API_KEY = "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";
     
     let streamRef = null;
@@ -105,23 +105,32 @@
     const startBtn = document.getElementById('start-btn');
     const captureBtn = document.getElementById('capture-btn');
 
-    // 1. 카메라 시작
+    // 1. 카메라 기능 켜기
     async function startCamera() {
         try {
-            resultBox.innerHTML = "카메라 권한을 요청 중입니다...";
-            streamRef = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment" }, 
+            resultBox.innerHTML = "카메라 작동을 시도 중입니다...";
+            
+            // 모바일 환경의 후면 카메라 요청 처리 보완
+            const constraints = {
+                video: { 
+                    facingMode: { ideal: "environment" } 
+                }, 
                 audio: false 
-            });
+            };
+            
+            streamRef = await navigator.mediaDevices.getUserMedia(constraints);
             video.srcObject = streamRef;
+            
+            // 엘리먼트 가시성 제어 오류 수정 완료
             video.style.display = "block";
             img.style.display = "none";
             startBtn.style.display = "none";
-            captureBtn.style.style.display = "block";
+            captureBtn.style.display = "block";
+            
             resultBox.innerHTML = "키오스크 화면이 잘 보이도록 맞추고 '이 화면 분석하기' 버튼을 눌러주세요.";
         } catch (err) {
-            console.error(err);
-            resultBox.innerHTML = "❌ 카메라를 켤 수 없습니다. 권한을 허용했는지 확인해 주세요. (HTTPS 환경 필수)";
+            console.error("카메라 에러 세부 로그:", err);
+            resultBox.innerHTML = `❌ 카메라를 활성화할 수 없습니다.<br>원인: ${err.name}<br>팁: 주소가 https:// 로 시작하는지, 크롬 앱 내부 설정에서 카메라 권한이 켜져 있는지 다시 확인해 보세요.`;
         }
     }
 
@@ -129,16 +138,13 @@
     async function captureAndAnalyze() {
         if (!streamRef) return;
 
-        // 캔버스에 현재 영상 프레임 복사
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
         const ctx = canvas.getContext('2d');
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        // 데이터 URL 추출 (JPEG)
         const dataUrl = canvas.toDataURL('image/jpeg');
         
-        // UI 전환 (비디오 끄고 캡처 이미지 표시)
         img.src = dataUrl;
         img.style.display = "block";
         video.style.display = "none";
@@ -148,11 +154,9 @@
 
         resultBox.innerHTML = "<span class='loading'>인공지능이 키오스크 화면을 분석하고 있습니다. 잠시만 기다려주세요...</span>";
 
-        // AI 프롬프트 정의
         const systemPrompt = "당신은 키오스크 사용이 어려운 고령층과 노약자를 돕는 특화 AI 도우미입니다. 제출된 키오스크 화면 이미지를 정밀 분석하여 다음 규칙에 따라 응답하세요:\n1. 현재 어떤 단계의 화면인지 친절하게 한 문장으로 요약합니다.\n2. 사용자가 목적을 달성하기 위해 '다음에 눌러야 할 버튼의 위치, 이름, 색상'을 매우 구체적으로 설명합니다. (예: 화면 오른쪽 아래에 있는 초록색 '주문하기' 버튼을 누르세요)\n3. 화면 속의 어려운 영어나 한자어, 전문 용어는 노약자가 이해하기 쉬운 우리말로 풀어서 안내합니다.\n4. 반드시 짧고 명확한 호흡의 존댓말로 작성하세요.";
 
         try {
-            // OpenRouter API 호출 (Llama-4 Maverick 무료 비전 모델 사용)
             const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
                 method: "POST",
                 headers: {
@@ -178,7 +182,6 @@
             if (result.choices && result.choices[0]) {
                 const aiText = result.choices[0].message.content;
                 resultBox.innerHTML = aiText;
-                // 웹 음성 합성(TTS)으로 가이드 읽어주기
                 speak(aiText);
             } else {
                 console.error(result);
@@ -191,14 +194,12 @@
         }
     }
 
-    // 3. 음성 안내(TTS) 모듈
+    // 3. 음성 가이드 (TTS)
     function speak(text) {
-        // 기존 재생 중인 음성 모두 취소
         window.speechSynthesis.cancel();
-        
         const speech = new SpeechSynthesisUtterance(text);
         speech.lang = 'ko-KR';
-        speech.rate = 0.9; // 조금 천천히 읽기 (노약자 배려)
+        speech.rate = 0.9;
         window.speechSynthesis.speak(speech);
     }
 </script>
