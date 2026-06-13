@@ -13,14 +13,15 @@
         button:active { transform: scale(0.98); }
         #capture-btn { background-color: #28a745; display: none; }
         #result-box { margin-top: 20px; padding: 20px; background: #e9ecef; border-radius: 10px; font-size: 1.3rem; line-height: 1.6; text-align: left; min-height: 100px; white-space: pre-wrap; }
+        #stt-box { margin-top: 15px; padding: 15px; background: #fff3cd; border: 1px solid #ffeeba; border-radius: 10px; font-size: 1.2rem; font-weight: bold; color: #856404; display: none; text-align: center; }
         .loading { color: #666; font-style: italic; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h1>👀 키오스캔</h1>
-    <p style="font-size: 1.2rem; color: #666;">카메라로 키오스크를 비추면 구글 Gemini AI가 설명해 드립니다.</p>
+    <h1>👀 키오스캔 (보이스 모드)</h1>
+    <p style="font-size: 1.2rem; color: #666;">카메라로 촬영 후, AI의 안내에 따라 말로 주문할 수 있습니다.</p>
     
     <video id="camera-view" autoplay playsinline></video>
     <img id="captured-image" alt="단말기 캡처 화면">
@@ -29,23 +30,59 @@
     <button id="start-btn" onclick="startCamera()">📷 화면 비추기 시작</button>
     <button id="capture-btn" onclick="captureAndAnalyze()">🔍 이 화면 분석하기</button>
     
+    <!-- 실시간 음성인식(STT) 결과 창 -->
+    <div id="stt-box">🎙️ 말씀해 주세요... (듣는 중)</div>
     <div id="result-box">아래 버튼을 눌러 카메라를 켜고 키오스크를 촬영해 주세요.</div>
 </div>
 
 <script>
-    // 사용자가 새로 발급받은 정식 구글 Gemini API Key
     const GEMINI_API_KEY = "AQ.Ab8RN6LMYkuEtq9D3et7Tacx0zmQkWpruMbv0aNItNhilzbgng";
     
     let streamRef = null;
+    let recognition = null;
     const video = document.getElementById('camera-view');
     const img = document.getElementById('captured-image');
     const canvas = document.getElementById('hidden-canvas');
     const resultBox = document.getElementById('result-box');
+    const sttBox = document.getElementById('stt-box');
     const startBtn = document.getElementById('start-btn');
     const captureBtn = document.getElementById('capture-btn');
 
+    // 1. 브라우저 내장 음성 인식(STT) 엔진 초기화
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+        recognition = new SpeechRecognition();
+        recognition.continuous = false; // 한 문장씩 인식
+        recognition.lang = 'ko-KR';     // 한국어 설정
+        recognition.interimResults = false; // 중간 결과 생략
+
+        // 음성 인식 시작 시
+        recognition.onstart = () => {
+            sttBox.style.display = "block";
+            sttBox.innerHTML = "🎙️ 말씀해 주세요... (음성 제어 듣는 중)";
+        };
+
+        // 음성 인식 성공 시 사용자 목소리를 데이터화하여 텍스트로 출력
+        recognition.onresult = (event) => {
+            const userSpeech = event.results[0][0].transcript;
+            sttBox.innerHTML = `📢 인식된 명령: "${userSpeech}"`;
+            resultBox.innerHTML += `\n\n[보이스 제어 수신 데이터]: "${userSpeech}" 명령을 분석하여 로봇 제어 모듈로 전송합니다.`;
+            // 💡 추후 이곳에 특정 단어(예: "아메리카노", "결제")가 포함되면 로봇팔을 움직이는 코드를 연결하면 됩니다!
+        };
+
+        // 음성 인식 종료 시
+        recognition.onend = () => {
+            setTimeout(() => { sttBox.style.display = "none"; }, 5000); // 5초 후 인식창 닫기
+        };
+
+        recognition.onerror = () => {
+            sttBox.innerHTML = "❌ 음성을 인식하지 못했습니다. 다시 시도해 주세요.";
+        };
+    }
+
     async function startCamera() {
         try {
+            stopAllSpeechAndRec(); // 카메라 리셋 시 전부 중지
             resultBox.innerHTML = "카메라를 연결하는 중입니다...";
             streamRef = await navigator.mediaDevices.getUserMedia({ 
                 video: { facingMode: { ideal: "environment" } }, 
@@ -58,7 +95,7 @@
             captureBtn.style.display = "block";
             resultBox.innerHTML = "키오스크 화면을 조준하고 '이 화면 분석하기'를 눌러주세요.";
         } catch (err) {
-            resultBox.innerHTML = "❌ 카메라를 켤 수 없습니다. 크롬 설정에서 권한 허용을 다시 확인해 주세요.";
+            resultBox.innerHTML = "❌ 카메라를 켤 수 없습니다. 권한 허용을 확인해 주세요.";
         }
     }
 
@@ -71,22 +108,26 @@
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
         const dataUrl = canvas.toDataURL('image/jpeg');
-        const base64Data = dataUrl.split(',')[1]; // 순수 base64 데이터만 추출
+        const base64Data = dataUrl.split(',')[1]; 
         
         img.src = dataUrl;
         img.style.display = "block";
         video.style.display = "none";
         captureBtn.style.display = "none";
         startBtn.style.display = "block";
+        
+        stopAllSpeechAndRec(); // 다시 촬영 버튼 누르는 순간 기존 TTS와 STT 강제 종료
         startBtn.innerText = "🔄 다시 촬영하기";
 
-        resultBox.innerHTML = "<span class='loading'>구글 제미나이 AI가 키오스크를 교육받은 대로 분석 중입니다...</span>";
+        resultBox.innerHTML = "<span class='loading'>구글 제미나이 AI가 보이스 어시스턴트 모드로 키오스크를 분석 중입니다...</span>";
 
-        // 제미나이를 똑똑하게 행동하도록 훈련시키는 교육 지침서(프롬프트)
-        const instruction = "당신은 키오스크 사용이 어려운 고령층과 노약자를 돕는 특화 AI 도우미입니다. 제출된 키오스크 화면 이미지를 정밀 분석하여 다음 규칙에 따라 응답하세요:\n1. 현재 어떤 단계의 화면인지 친절하게 한 문장으로 요약합니다.\n2. 사용자가 목적을 달성하기 위해 '다음에 눌러야 할 버튼의 위치, 이름, 색상'을 매우 구체적으로 설명합니다. (예: 화면 오른쪽 아래에 있는 초록색 '주문하기' 버튼을 누르세요)\n3. 화면 속의 어려운 영어나 한자어, 전문 용어는 노약자가 이해하기 쉬운 우리말로 풀어서 안내합니다.\n4. 반드시 짧고 명확한 호흡의 존댓말로 작성하세요.";
+        const instruction = "당신은 키오스크 사용이 어려운 시각 장애인 및 고령층을 돕는 보이스 어시스턴트 특화 AI입니다. 제출된 이미지를 분석하여 다음 규칙을 절대적으로 지켜 응답하세요:\n" +
+                            "1. 현재 화면이 어떤 단계(예: 메뉴 선택, 장바구니, 결제 등)인지 한 문장으로 친절하게 요약합니다.\n" +
+                            "2. 시각 장애인이 스마트폰 마이크에 대고 말로 주문할 수 있도록, 다음에 취해야 할 행동을 안내할 때 반드시 [원하시는 메뉴를 화면에서 고르거나 큰 소리로 말해주세요] 혹은 [원하시는 결제 수단을 고르거나 말해주세요]와 같이 \"~를 고르거나 말해주세요\"라는 문장 서술 형식을 필수로 사용하여 안내하세요.\n" +
+                            "3. 화면의 어려운 외래어나 영문 직원은 직관적인 우리말로 바꾸어 설명하세요.\n" +
+                            "4. 정중하고 명확한 호흡의 높임말로 답변을 생성하세요.";
 
         try {
-            // 정식 구글 공식 Gemini API 규격으로 전송
             const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -102,25 +143,42 @@
 
             const result = await response.json();
             
-            // 제미나이 응답 텍스트 파싱
             if (result.candidates && result.candidates[0].content.parts[0].text) {
                 const aiText = result.candidates[0].content.parts[0].text;
                 resultBox.innerHTML = aiText;
-                speak(aiText); // 음성 재생
+                speak(aiText); // AI가 화면 가이드를 음성(TTS)으로 출력
             } else {
-                resultBox.innerHTML = "❌ 제미나이가 화면을 보았으나 안내 문구를 생성하지 못했습니다. 다시 촬영해 주세요.";
+                resultBox.innerHTML = "❌ AI가 화면 안내 문구를 생성하지 못했습니다. 다시 촬영해 주세요.";
             }
         } catch (error) {
-            resultBox.innerHTML = "❌ 구글 서버 연결 실패. 잠시 후 다시 시도해 주세요.";
+            resultBox.innerHTML = "❌ 구글 서버 연결 실패. 네트워크 상태를 확인해 주세요.";
         }
     }
 
+    // TTS(음성 출력) 수행 함수
     function speak(text) {
-        window.speechSynthesis.cancel();
+        stopAllSpeechAndRec();
         const speech = new SpeechSynthesisUtterance(text);
         speech.lang = 'ko-KR';
-        speech.rate = 0.9;
+        speech.rate = 0.95; // 노약자를 위해 살짝 천천히 읽기
+
+        // 💡 [핵심 연동] AI가 안내 방송(TTS)을 완료하면 자동으로 사용자의 음성인식(STT) 마이크를 켭니다.
+        speech.onend = () => {
+            if (recognition) {
+                recognition.start();
+            }
+        };
+
         window.speechSynthesis.speak(speech);
+    }
+
+    // 오디오 장치 충돌 방지를 위해 이전의 음성 재생 및 인식을 한 번에 끄는 함수
+    function stopAllSpeechAndRec() {
+        window.speechSynthesis.cancel();
+        if (recognition) {
+            try { recognition.stop(); } catch(e) {}
+        }
+        sttBox.style.display = "none";
     }
 </script>
 
