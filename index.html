@@ -50,7 +50,7 @@
     
     let streamRef = null;
     let recognition = null;
-    let lastCapturedBase64 = null; 
+    let globalCapturedBase64 = null; // 고쳐진 핵심 파트: 이미지를 안전하게 보관할 전역 변수
     let isRecognizing = false;
 
     const video = document.getElementById('camera-view');
@@ -62,6 +62,7 @@
     const captureBtn = document.getElementById('capture-btn');
     const voiceArea = document.getElementById('voice-btn-area');
 
+    // 웹 브라우저 내장 STT 시스템 초기화
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (SpeechRecognition) {
         recognition = new SpeechRecognition();
@@ -109,7 +110,7 @@
             recognition.stop();
         }
         
-        const finalSpeech = sttBox.innerText.replace('📢 입력 중: ', '').replace('🎙️ 말씀해 주세요... (음성 수신 중)', '').trim();
+        const finalSpeech = sttBox.innerText.replace('📢 입력 중: ', '').replace('🎙️ 말씀해 주세요... (음성 수신 중)', '').replace(/"/g, '').trim();
         
         if (!finalSpeech || finalSpeech === "" || finalSpeech.includes("오류") || finalSpeech.includes("말씀해")) {
             sttBox.innerHTML = "⚠️ 인식된 음성 명령이 없습니다. 다시 시작을 누르고 말씀해 주세요.";
@@ -124,7 +125,6 @@
             stopAllSpeechAndRec();
             resultBox.innerHTML = "카메라 장치를 연결하는 중입니다...";
             
-            // 모바일 호환성을 대폭 높인 카메라 설정 값
             const constraints = {
                 video: {
                     facingMode: "environment", 
@@ -146,10 +146,11 @@
             resultBox.innerHTML = "키오스크 화면을 조준하고 '이 화면 분석하기'를 눌러주세요.";
         } catch (err) {
             console.error(err);
-            resultBox.innerHTML = "❌ 카메라를 켤 수 없습니다.<br>원인: " + err.name + "<br>주소창 왼쪽 자물쇠(🔒)를 눌러 카메라 권한을 '허용'해 주세요. 스마트폰 크롬 앱으로 접속하는 것이 가장 좋습니다.";
+            resultBox.innerHTML = "❌ 카메라를 켤 수 없습니다.<br>원인: " + err.name + "<br>주소창 왼쪽 자물쇠(🔒)를 눌러 카메라 권한을 '허용'해 주세요.";
         }
     }
 
+    // 사진 촬영 및 1차 분석 진행 (오류 수정 패치)
     async function captureAndAnalyze() {
         if (!streamRef) return;
 
@@ -159,7 +160,7 @@
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
         const dataUrl = canvas.toDataURL('image/jpeg');
-        lastCapturedBase64 = dataUrl.split(',')[1]; 
+        globalCapturedBase64 = dataUrl.split(',')[1]; // 전역 변수에 유효한 base64 이미지 데이터 저장 완료
         
         img.src = dataUrl;
         img.style.display = "block";
@@ -171,7 +172,7 @@
         startBtn.innerText = "🔄 다시 촬영하기";
         voiceArea.style.display = "flex"; 
 
-        resultBox.innerHTML = "<span class='loading'>구글 제미나이 AI가 키오스크 화면을 분석 중입니다...</span>";
+        resultBox.innerHTML = "<span class='loading'>구글 제미나이 AI가 키오스크 화면을 정밀 분석 중입니다...</span>";
 
         const instruction = "당신은 키오스크 사용이 어려운 고령층과 노약자를 돕는 특화 AI 도우미입니다. 제출된 키오스크 화면 이미지를 분석하여 다음 규칙을 절대적으로 지켜 응답하세요:\n" +
                             "1. [절대 금지 규칙] '누르세요', '눌러주세요', '터치하세요', '클릭하세요' 라는 단어는 어떤 상황에서도 절대로 사용해서는 안 됩니다.\n" +
@@ -186,7 +187,7 @@
                     contents: [{
                         parts: [
                             { text: instruction },
-                            { inlineData: { mimeType: "image/jpeg", data: lastCapturedBase64 } }
+                            { inlineData: { mimeType: "image/jpeg", data: globalCapturedBase64 } } // 고쳐진 부분
                         ]
                     }]
                 })
@@ -198,17 +199,17 @@
                 resultBox.innerHTML = aiText;
                 speak(aiText);
             } else {
-                resultBox.innerHTML = "❌ AI가 화면 안내 문구를 생성하지 못했습니다. 다시 촬영해 주세요.";
+                resultBox.innerHTML = "❌ AI가 화면 안내 문구를 생성하지 못했습니다. 조명이 너무 어둡거나 화면이 흔들렸을 수 있으니 다시 촬영해 주세요.";
             }
         } catch (error) {
             resultBox.innerHTML = "❌ 구글 서버 연결 실패. 네트워크 상태를 확인해 주세요.";
         }
     }
 
-    // 💡 [버그 전면 수정 완료 파트] 따옴표 결합 에러를 완벽하게 고쳤습니다.
+    // 사용자가 말한 단어(STT) 수신 후 제미나이 재분석 요청 파트
     async function sendVoiceCommandToGemini(userMessage) {
-        if (!lastCapturedBase64) {
-            resultBox.innerHTML = "❌ 분석할 키오스크 사진이 없습니다. 다시 촬영해 주세요.";
+        if (!globalCapturedBase64) {
+            resultBox.innerHTML = "❌ 분석할 키오스크 사진 데이터가 증발했습니다. 다시 촬영해 주세요.";
             return;
         }
 
@@ -228,7 +229,7 @@
                     contents: [{
                         parts: [
                             { text: voiceInstruction },
-                            { inlineData: { mimeType: "image/jpeg", data: lastCapturedBase64 } }
+                            { inlineData: { mimeType: "image/jpeg", data: globalCapturedBase64 } } // 고쳐진 부분
                         ]
                     }]
                 })
