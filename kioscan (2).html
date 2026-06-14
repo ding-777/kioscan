@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>키오스캔 (KioScan)</title>
+    <style>
+        body { font-family: 'Malgun Gothic', sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; text-align: center; }
+        h1 { color: #333; font-size: 2.5rem; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        #camera-view, #captured-image { width: 100%; max-height: 400px; border-radius: 10px; display: none; margin-bottom: 20px; object-fit: contain; background: #000; }
+        button { border: none; padding: 20px 40px; font-size: 1.5rem; font-weight: bold; border-radius: 10px; cursor: pointer; width: 100%; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); transition: transform 0.1s; }
+        button:active { transform: scale(0.98); }
+        #start-btn { background-color: #007bff; color: white; width: 100%; }
+        #capture-btn { background-color: #28a745; color: white; display: none; width: 100%; }
+        
+        .voice-controls { display: none; margin-bottom: 15px; gap: 10px; width: 100%; }
+        #stt-start-btn { background-color: #ffc107; color: #212529; flex: 1; padding: 15px; font-size: 1.2rem; }
+        #stt-stop-btn { background-color: #dc3545; color: white; flex: 1; padding: 15px; font-size: 1.2rem; }
+        
+        #result-box { margin-top: 20px; padding: 20px; background: #e9ecef; border-radius: 10px; font-size: 1.3rem; line-height: 1.6; text-align: left; min-height: 100px; white-space: pre-wrap; }
+        #stt-box { margin-top: 15px; padding: 15px; background: #fff3cd; border: 1px solid #ffeeba; border-radius: 10px; font-size: 1.2rem; font-weight: bold; color: #856404; display: none; text-align: center; }
+        .loading { color: #666; font-style: italic; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>👀 키오스캔 (보이스 모드)</h1>
+    <p style="font-size: 1.2rem; color: #666;">카메라로 촬영 후, 음성 버튼을 이용해 말로 주문해 주세요.</p>
+    
+    <video id="camera-view" autoplay playsinline></video>
+    <img id="captured-image" alt="단말기 캡처 화면">
+    <canvas id="hidden-canvas" style="display:none;"></canvas>
+
+    <button id="start-btn" onclick="startCamera()">📷 화면 비추기 시작</button>
+    <button id="capture-btn" onclick="captureAndAnalyze()">🔍 이 화면 분석하기</button>
+    
+    <div id="voice-btn-area" class="voice-controls">
+        <button id="stt-start-btn" onclick="startSpeechRecognition()">🎙️ 음성인식 시작</button>
+        <button id="stt-stop-btn" onclick="stopSpeechRecognition()">⏹️ 인식 종료 및 분석</button>
+    </div>
+    
+    <div id="stt-box">🎙️ 말씀해 주세요...</div>
+    <div id="result-box">아래 버튼을 눌러 카메라를 켜고 키오스크를 촬영해 주세요.</div>
+</div>
+
+<script>
+    const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+    const OPENROUTER_API_KEY = "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";
+    
+    let streamRef = null;
+    let recognition = null;
+    let globalCapturedBase64 = null; 
+    let isRecognizing = false;
+    let recognizedText = "";
+
+    const video = document.getElementById('camera-view');
+    const img = document.getElementById('captured-image');
+    const canvas = document.getElementById('hidden-canvas');
+    const resultBox = document.getElementById('result-box');
+    const sttBox = document.getElementById('stt-box');
+    const startBtn = document.getElementById('start-btn');
+    const captureBtn = document.getElementById('capture-btn');
+    const voiceArea = document.getElementById('voice-btn-area');
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+        recognition = new SpeechRecognition();
+        recognition.continuous = false; 
+        recognition.lang = 'ko-KR';
+        recognition.interimResults = false; 
+
+        recognition.onstart = () => {
+            isRecognizing = true;
+            sttBox.style.display = "block";
+            sttBox.innerHTML = "🎙️ 대화를 듣고 있습니다... 말씀하세요.";
+        };
+
+        recognition.onresult = (event) => {
+            recognizedText = event.results[0][0].transcript;
+            sttBox.innerHTML = `📢 입력된 내용: "${recognizedText}"`;
+        };
+
+        recognition.onend = () => { isRecognizing = false; };
+        recognition.onerror = (event) => {
+            sttBox.style.display = "block";
+            sttBox.innerHTML = "❌ 음성 인식 실패: " + event.error;
+            if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+                alert("마이크 권한이 차단되어 있습니다. 주소창의 자물쇠(🔒) 아이콘을 눌러 마이크를 '허용'으로 바꿔주세요.");
+            }
+        };
+    }
+
+    function startSpeechRecognition() {
+        if (!recognition) {
+            alert("이 브라우저는 음성인식을 지원하지 않습니다. 크롬 브라우저를 사용해 주세요.");
+            return;
+        }
+
+        if (!window.isSecureContext) {
+            alert("음성인식은 https 주소에서만 작동합니다. (현재: " + location.protocol + ")");
+            return;
+        }
+
+        window.speechSynthesis.cancel(); 
+        recognizedText = ""; 
+
+        if (isRecognizing) {
+            try { recognition.stop(); } catch(e) {}
+            setTimeout(() => {
+                try { recognition.start(); } catch(e) { alert("음성인식 시작 오류: " + e.message); }
+            }, 300);
+            return;
+        }
+
+        try {
+            recognition.start();
+        } catch(e) {
+            alert("음성인식 시작 오류: " + e.message);
+        }
+    }
+
+    function stopSpeechRecognition() {
+        if (recognition && isRecognizing) { recognition.stop(); }
+        setTimeout(() => {
+            if (!recognizedText || recognizedText.trim() === "") {
+                sttBox.innerHTML = "⚠️ 인식된 음성이 없습니다. 다시 말해주세요.";
+                return;
+            }
+            sendVoiceCommandToOpenRouter(recognizedText);
+        }, 500);
+    }
+
+    async function startCamera() {
+        try {
+            stopAllSpeechAndRec();
+            resultBox.innerHTML = "카메라 장치 연결 중...";
+            const constraints = { video: { facingMode: "environment", width: { ideal: 640 }, height: { ideal: 480 } }, audio: false };
+            streamRef = await navigator.mediaDevices.getUserMedia(constraints);
+            video.srcObject = streamRef;
+            video.setAttribute("playsinline", true); 
+            video.style.display = "block";
+            img.style.display = "none";
+            startBtn.style.display = "none";
+            captureBtn.style.display = "block";
+            resultBox.innerHTML = "화면을 조준하고 '이 화면 분석하기'를 눌러주세요.";
+        } catch (err) {
+            resultBox.innerHTML = "❌ 주소창 자물쇠(🔒) 카메라 권한을 허용해 주세요.";
+        }
+    }
+
+    // 1차 분석 파트
+    async function captureAndAnalyze() {
+        if (!streamRef) return;
+
+        canvas.width = 640;
+        canvas.height = 480;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+        globalCapturedBase64 = dataUrl; 
+        
+        img.src = dataUrl;
+        img.style.display = "block";
+        video.style.display = "none";
+        captureBtn.style.display = "none";
+        startBtn.style.display = "block";
+        
+        stopAllSpeechAndRec();
+        startBtn.innerText = "🔄 다시 촬영하기";
+        voiceArea.style.display = "flex"; 
+
+        resultBox.innerHTML = "<span class='loading'>오픈라우터 AI 가이드를 생성하고 있습니다...</span>";
+
+        const instruction = "당신은 키오스크 사용이 어려운 고령층을 돕는 도우미 AI입니다. 다음 규칙을 절대적으로 지키세요.\n" +
+                            "1. '누르세요', '눌러주세요', '터치하세요' 단어는 절대 사용 금지입니다.\n" +
+                            "2. 문장 끝은 무조건 '~를 고르거나 메뉴를 말해주세요' 포맷으로만 끝내세요.\n" +
+                            "3. 현재 화면 단계를 첫 문장에 요약하세요.";
+
+        const requestBody = {
+            model: "google/gemini-2.5-flash",
+            max_tokens: 1000,
+            messages: [
+                {
+                    role: "user",
+                    content: [
+                        { type: "text", text: instruction },
+                        {
+                            type: "image_url",
+                            image_url: {
+                                url: globalCapturedBase64
+                            }
+                        }
+                    ]
+                }
+            ]
+        };
+
+        try {
+            const response = await fetch(OPENROUTER_URL, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(requestBody)
+            });
+
+            const result = await response.json();
+            
+            if (result.choices && result.choices[0] && result.choices[0].message) {
+                const aiText = result.choices[0].message.content;
+                resultBox.innerHTML = aiText;
+                speak(aiText);
+            } else {
+                resultBox.innerHTML = "❌ 에러 발생: 오픈라우터 연동 규격 오류 또는 크레딧 부족.\n로그 내용: " + JSON.stringify(result);
+            }
+        } catch (error) {
+            resultBox.innerHTML = "❌ 오픈라우터 네트워크 연결 실패.";
+        }
+    }
+
+    // 2차 분석 파트: 음성 제어 응답 동기화
+    async function sendVoiceCommandToOpenRouter(userMessage) {
+        if (!globalCapturedBase64) {
+            resultBox.innerHTML = "❌ 사진 데이터가 유실되었습니다.";
+            return;
+        }
+
+        resultBox.innerHTML = `<span class='loading'>📢 요청 명령 [${userMessage}] 분석 중...</span>`;
+
+        const voiceInstruction = "당신은 하드웨어 제어 연동 AI입니다. 촬영된 키오스크 사진과 사용자 음성 명령을 비교 분석하여 답변하세요.\n\n사용자 명령: \"" + userMessage + "\"\n\n규칙:\n1. 사용자가 요구한 메뉴가 이미지의 어느 위치에 있는지 노약자가 이해하기 쉽게 설명하세요.\n2. 절대 '누르세요'는 쓰지 말고, [요청하신 내용을 접수하여 로봇 조작 제어부로 전송합니다. 잠시만 기다려주세요] 멘트를 끝에 강제로 붙이세요.";
+
+        const requestBody = {
+            model: "google/gemini-2.5-flash",
+            max_tokens: 1000,
+            messages: [
+                {
+                    role: "user",
+                    content: [
+                        { type: "text", text: voiceInstruction },
+                        {
+                            type: "image_url",
+                            image_url: {
+                                url: globalCapturedBase64
+                            }
+                        }
+                    ]
+                }
+            ]
+        };
+
+        try {
+            const response = await fetch(OPENROUTER_URL, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(requestBody)
+            });
+
+            const result = await response.json();
+            
+            if (result.choices && result.choices[0] && result.choices[0].message) {
+                const aiResponseText = result.choices[0].message.content;
+                resultBox.innerHTML = `[음성 제어 안내]\n${aiResponseText}`;
+                speak(aiResponseText); 
+            } else {
+                resultBox.innerHTML = "❌ 음성 분석 중 오류 발생.";
+            }
+        } catch (error) {
+            resultBox.innerHTML = "❌ 오픈라우터 서버 연동 오류.";
+        }
+    }
+
+    function speak(text) {
+        window.speechSynthesis.cancel();
+        let cleanText = text.replace(/[^ㄱ-ㅎㅏ-ㅣ가-힣a-zA-Z0-9.\,\?\!\s]/g, "").trim();
+        const speech = new SpeechSynthesisUtterance(cleanText);
+        speech.lang = 'ko-KR';
+        speech.rate = 0.95;
+        window.speechSynthesis.speak(speech);
+    }
+
+    function stopAllSpeechAndRec() {
+        window.speechSynthesis.cancel();
+        if (recognition && isRecognizing) { try { recognition.stop(); } catch(e) {} }
+        sttBox.style.display = "none";
+        voiceArea.style.display = "none";
+    }
+</script>
+
+</body>
+</html>
