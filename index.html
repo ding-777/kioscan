@@ -47,7 +47,6 @@
 
 <script>
     const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-    // 🔑 현서가 새로 준 오픈라우터 API Key 반영 완료!
     const OPENROUTER_API_KEY = "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";
     
     let streamRef = null;
@@ -126,6 +125,7 @@
         }
     }
 
+    // 1차 분석 파트: 오픈라우터에서 요구하는 엄격한 이미지 데이터 포맷 전면 패치
     async function captureAndAnalyze() {
         if (!streamRef) return;
 
@@ -134,8 +134,9 @@
         const ctx = canvas.getContext('2d');
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
-        globalCapturedBase64 = dataUrl.split(',')[1]; 
+        // 오픈라우터 규격: data:image/jpeg;base64 형식 전체가 깔끔하게 파싱되도록 완전한 URL 포맷 유지
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+        globalCapturedBase64 = dataUrl; 
         
         img.src = dataUrl;
         img.style.display = "block";
@@ -154,6 +155,7 @@
                             "2. 문장 끝은 무조건 '~를 고르거나 메뉴를 말해주세요' 포맷으로만 끝내세요.\n" +
                             "3. 현재 화면 단계를 첫 문장에 요약하세요.";
 
+        // 🔥 오픈라우터 멀티모달 표준 구조 맞춤 수정
         const requestBody = {
             model: "google/gemini-2.5-flash",
             messages: [
@@ -164,7 +166,7 @@
                         {
                             type: "image_url",
                             image_url: {
-                                url: `data:image/jpeg;base64,${globalCapturedBase64}`
+                                url: globalCapturedBase64
                             }
                         }
                     ]
@@ -184,19 +186,19 @@
 
             const result = await response.json();
             
-            if (result.choices && result.choices[0].message && result.choices[0].message.content) {
+            if (result.choices && result.choices[0] && result.choices[0].message) {
                 const aiText = result.choices[0].message.content;
                 resultBox.innerHTML = aiText;
                 speak(aiText);
             } else {
-                resultBox.innerHTML = "❌ AI가 화면 안내 문구를 생성하지 못했습니다. 키 잔액 부족이거나 오류일 수 있습니다.";
-                console.error(result);
+                resultBox.innerHTML = "❌ 에러 발생: 오픈라우터 연동 규격 오류 또는 크레딧 부족.\n로그 내용: " + JSON.stringify(result);
             }
         } catch (error) {
-            resultBox.innerHTML = "❌ 오픈라우터 서버 연동 실패.";
+            resultBox.innerHTML = "❌ 오픈라우터 네트워크 연결 실패.";
         }
     }
 
+    // 2차 분석 파트: 음성 제어 응답 동기화
     async function sendVoiceCommandToOpenRouter(userMessage) {
         if (!globalCapturedBase64) {
             resultBox.innerHTML = "❌ 사진 데이터가 유실되었습니다.";
@@ -217,7 +219,7 @@
                         {
                             type: "image_url",
                             image_url: {
-                                url: `data:image/jpeg;base64,${globalCapturedBase64}`
+                                url: globalCapturedBase64
                             }
                         }
                     ]
@@ -237,12 +239,12 @@
 
             const result = await response.json();
             
-            if (result.choices && result.choices[0].message && result.choices[0].message.content) {
+            if (result.choices && result.choices[0] && result.choices[0].message) {
                 const aiResponseText = result.choices[0].message.content;
                 resultBox.innerHTML = `[음성 제어 안내]\n${aiResponseText}`;
                 speak(aiResponseText); 
             } else {
-                resultBox.innerHTML = "❌ 음성 분석 응답 실패.";
+                resultBox.innerHTML = "❌ 음성 분석 중 오류 발생.";
             }
         } catch (error) {
             resultBox.innerHTML = "❌ 오픈라우터 서버 연동 오류.";
